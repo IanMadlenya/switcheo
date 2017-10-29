@@ -94,8 +94,8 @@ namespace switcheo
             // == Init ==
             if (operation == "initialize")
             {
-                if (args.Length != 4) return false;
-                if (!Runtime.CheckWitness((byte[])args[0])) return false;
+                if (args.Length != 4) return -1;
+                if (!Runtime.CheckWitness((byte[])args[0])) return -2;
                 return Initialize((byte[])args[0], (BigInteger)args[1], (BigInteger)args[2], (byte[])args[3]);
             }
 
@@ -103,12 +103,12 @@ namespace switcheo
             // == Query ==
 
             // Check that contract has been initialized
-            if (Storage.Get(Storage.CurrentContext, "state") == Pending) return false;
+            if (Storage.Get(Storage.CurrentContext, "state") == Pending) return -3;
             
             // TODO: do we need all these helper methods? client can query contract storage directly!
             if (operation == "getOffers")
             {
-                if (args.Length != 4) return false;
+                if (args.Length != 4) return -4;
                 var key = ((byte[])args[0]).
                     Concat(new byte[] { (byte)args[1] }).
                     Concat((byte[])args[2]).
@@ -117,7 +117,7 @@ namespace switcheo
             }
             if (operation == "getOffer")
             {
-                if (args.Length != 1) return false;
+                if (args.Length != 1) return -5;
                 return Storage.Get(Storage.CurrentContext, (byte[]) args[0]);
             }
             if (operation == "tradingStatus")
@@ -134,7 +134,7 @@ namespace switcheo
             if (Runtime.Trigger == TriggerType.Verification)
             {
                 // TODO: is this right?
-                if (!Runtime.CheckWitness((byte[])args[0])) return false;
+                if (!Runtime.CheckWitness((byte[])args[0])) return -6;
 
                 // What does this sample code mean? :
                 //    if (Owner.Length == 20)
@@ -150,35 +150,35 @@ namespace switcheo
 
             if (operation == "makeOffer")
             {
-                if (Storage.Get(Storage.CurrentContext, "state") == Inactive) return false;
-                if (args.Length != 7) return false;
+                if (Storage.Get(Storage.CurrentContext, "state") == Inactive) return -7;
+                if (args.Length != 7) return -8;
                 var offer = NewOffer((byte[])args[0], (byte[])args[1], (byte)args[2], (byte[])args[3], (byte[])args[4], (byte)args[5], (byte[])args[6], (byte[])args[7]);
 
                 if (Runtime.Trigger == TriggerType.Verification) return VerifyOffer(offer);
                 else if (Runtime.Trigger == TriggerType.Application) return MakeOffer(offer);
-                return false;
+                return -9;
             }
             if (operation == "fillOffer")
             {
-                if (Storage.Get(Storage.CurrentContext, "state") == Inactive) return false;
-                if (args.Length != 3) return false;
+                if (Storage.Get(Storage.CurrentContext, "state") == Inactive) return -10;
+                if (args.Length != 3) return -11;
 
                 if (Runtime.Trigger == TriggerType.Verification) return VerifyFill((byte[])args[0], (byte[])args[1], (BigInteger)args[2]);
                 else if (Runtime.Trigger == TriggerType.Application) return FillOffer((byte[])args[0], (byte[])args[1], (BigInteger)args[2]);
-                return false;
+                return -12;
             }
             if (operation == "cancelOffer")
             {
-                if (args.Length != 2) return false;
+                if (args.Length != 2) return -13;
                 return CancelOffer((byte[])args[0], (byte[])args[1]);
             }
             if (operation == "withdrawAssets")
             {
-                if (args.Length != 5) return false;
+                if (args.Length != 5) return -14;
 
                 if (Runtime.Trigger == TriggerType.Verification) return VerifyWithdrawal((byte[])args[0], (byte[])args[1], (AssetCategory)args[2], (BigInteger)args[3], (byte[])args[4]);
                 else if (Runtime.Trigger == TriggerType.Application) return WithdrawAssets((byte[])args[0], (byte[])args[1], (AssetCategory)args[2], (BigInteger)args[3], (byte[])args[4]);
-                return false;
+                return -15;
             }
 
 
@@ -187,44 +187,46 @@ namespace switcheo
             if (Runtime.Trigger == TriggerType.Verification)
             {
                 // Check that originator is the owner
-                return (byte[])args[0] == Owner;
+                if ((byte[])args[0] != Owner) return -16;
             }
             else if (Runtime.Trigger == TriggerType.Application)
             {
                 if (operation == "freezeTrading")
                 {
                     Storage.Put(Storage.CurrentContext, "state", Inactive);
-                    return true;
+                    return -17;
                 }
                 if (operation == "unfreezeTrading")
                 {
                     Storage.Put(Storage.CurrentContext, "state", Active);
-                    return true;
+                    return -18;
                 }
                 if (operation == "setFees")
                 {
-                    if (args.Length != 2) return false;
+                    if (args.Length != 2) return -19;
                     return SetFees((BigInteger)args[1], (BigInteger)args[2]);
                 }
                 if (operation == "setFeeAddress")
                 {
-                    if (args.Length != 1) return false;
+                    if (args.Length != 1) return -20;
                     return SetFeeAddress((byte[])args[1]);
                 }
             }
 
-            return false;
+            return -99;
         }
 
-        private static bool Initialize(byte[] originator, BigInteger takerFee, BigInteger makerFee, byte[] feeAddress)
+        private static int Initialize(byte[] originator, BigInteger takerFee, BigInteger makerFee, byte[] feeAddress)
         {
-            if (originator != Owner) return false;
-            if (Storage.Get(Storage.CurrentContext, "state") != Pending) return false;
-            if (!SetFees(takerFee, makerFee)) return false;
-            if (!SetFeeAddress(feeAddress)) return false;
+            if (originator != Owner) return -21;
+            if (Storage.Get(Storage.CurrentContext, "state") != Pending) return -22;
+            var result = SetFees(takerFee, makerFee);
+            if (result != 0) return result;
+            result = SetFeeAddress(feeAddress);
+            if (result != 0) return result;
 
             Storage.Put(Storage.CurrentContext, "state", Active);
-            return true;
+            return 0;
         }
 
         private static byte[] GetOffers(byte[] offerAssetID, byte[] offerAssetCategory, byte[] wantAssetID, byte[] wantAssetCategory)
@@ -232,31 +234,31 @@ namespace switcheo
             return Storage.Get(Storage.CurrentContext, offerAssetID.Concat(offerAssetCategory).Concat(wantAssetID).Concat(wantAssetCategory));
         }
 
-        private static bool VerifyOffer(Offer offer)
+        private static int VerifyOffer(Offer offer)
         {
             // Check that nonce is not repeated
-            if (Storage.Get(Storage.CurrentContext, Hash(offer)).Length != 0) return false;
+            if (Storage.Get(Storage.CurrentContext, Hash(offer)).Length != 0) return -25;
 
             // Check that the amounts > 0
-            if (offer.OfferAmount <= 0 || offer.WantAmount <= 0) return false;
+            if (offer.OfferAmount <= 0 || offer.WantAmount <= 0) return -26;
 
             // Check that the amounts < 2^(2^32)
             // TODO: optimize this check
-            if (ToBytes(offer.OfferAmount).Length > 32 || ToBytes(offer.WantAmount).Length > 32) return false;
+            if (ToBytes(offer.OfferAmount).Length > 32 || ToBytes(offer.WantAmount).Length > 32) return -27;
 
             // Check the trade is across different assets
             // TODO: should we bother checking this?
-            if (offer.OfferAssetID == offer.WantAssetID && offer.OfferAssetCategory == offer.WantAssetCategory) return false;
+            if (offer.OfferAssetID == offer.WantAssetID && offer.OfferAssetCategory == offer.WantAssetCategory) return -28;
 
             // Check that asset IDs are valid
             // TODO: do we need this as Take(20) has already been invoked?
-            if (offer.OfferAssetID.Length != 20 || offer.WantAssetID.Length != 20) return false;
+            if (offer.OfferAssetID.Length != 20 || offer.WantAssetID.Length != 20) return -29;
 
             // Verify that the offer txn has really has the indicated assets available
             return VerifySentAmount(offer.MakerAddress, offer.OfferAssetID, offer.OfferAssetCategory, offer.OfferAmount);
         }
 
-        private static bool MakeOffer(Offer offer)
+        private static int MakeOffer(Offer offer)
         {
             var tradingPair = TradingPair(offer);
             var offerHash = Hash(offer);
@@ -266,7 +268,7 @@ namespace switcheo
             {
                 // TODO: Do we need to prevent re-entrancy due to external call?
                 bool transferSuccessful = (bool)CallRPXContract("transferFrom", ExecutionEngine.ExecutingScriptHash, offer.MakerAddress, ExecutionEngine.ExecutingScriptHash, offer.OfferAmount);
-                if (!transferSuccessful) return false; // XXX: Getting here would be very bad.
+                if (!transferSuccessful) return -30; // XXX: Getting here would be very bad.
             }
 
             // Store a mapping on the trading pair to the offer
@@ -278,23 +280,23 @@ namespace switcheo
 
             // Notify runtime
             Created(offerHash);
-            return true;
+            return 0;
         }
 
-        private static bool VerifyFill(byte[] fillerAddress, byte[] offerHash, BigInteger amountToFill)
+        private static int VerifyFill(byte[] fillerAddress, byte[] offerHash, BigInteger amountToFill)
         {
             // Check that the offer exists 
             byte[] offerData = Storage.Get(Storage.CurrentContext, offerHash);
-            if (offerData.Length == 0) return false;
+            if (offerData.Length == 0) return -31;
             Offer offer = FromBuffer(offerData);
 
             // Check that the filler is different from the maker
             // TODO: can we omit this?
-            if (fillerAddress == offer.MakerAddress) return false;
+            if (fillerAddress == offer.MakerAddress) return -32;
 
             // Check that amount to offer <= available amount
             BigInteger amountToOffer = AmountToOffer(offer, amountToFill);
-            if (amountToOffer > offer.AvailableAmount) return false;
+            if (amountToOffer > offer.AvailableAmount) return -33;
 
             // Verify that the filling txn really has the required assets available
             return VerifySentAmount(offer.MakerAddress, offer.OfferAssetID, offer.OfferAssetCategory, offer.OfferAmount);
@@ -344,15 +346,15 @@ namespace switcheo
             return true;
         }
 
-        private static bool CancelOffer(byte[] cancellerAddress, byte[] offerHash)
+        private static int CancelOffer(byte[] cancellerAddress, byte[] offerHash)
         {
             // Check that the offer exists
             byte[] offerData = Storage.Get(Storage.CurrentContext, offerHash);
-            if (offerData.Length == 0) return false;
+            if (offerData.Length == 0) return -34;
             Offer offer = FromBuffer(offerData);
 
             // Check that the canceller is also the offer maker
-            if (offer.MakerAddress != cancellerAddress) return false;
+            if (offer.MakerAddress != cancellerAddress) return -35;
 
             // Move funds to withdrawal address
             var storeKey = StoreKey(cancellerAddress, offer.OfferAssetID, offer.OfferAssetCategory);
@@ -365,15 +367,15 @@ namespace switcheo
 
             // Notify runtime
             Cancelled(offerHash);
-            return true;
+            return 0;
         }
 
-        private static bool VerifyWithdrawal(byte[] holderAddress, byte[] assetID, AssetCategory assetCategory, BigInteger amount, byte[] withdrawToThisAddress)
+        private static int VerifyWithdrawal(byte[] holderAddress, byte[] assetID, AssetCategory assetCategory, BigInteger amount, byte[] withdrawToThisAddress)
         {
             // Check that there are asset value > 0 in balance
             var key = StoreKey(holderAddress, assetID, assetCategory);
             var balance = Storage.Get(Storage.CurrentContext, key).AsBigInteger();
-            if (balance < amount) return false;
+            if (balance < amount) return -36;
 
             // Check that the transaction outputs matches the specified amount
             if (assetCategory == AssetCategory.SystemAsset)
@@ -384,21 +386,21 @@ namespace switcheo
                 foreach (var o in outputs)
                 {
                     if (o.AssetId == assetID && o.ScriptHash == withdrawToThisAddress) withdrawAmount += o.Value;
-                    else return false; // Only allow withdrawing the specified asset and destination
+                    else return -37; // Only allow withdrawing the specified asset and destination
                 }
-                if (withdrawAmount != amount) return false;
+                if (withdrawAmount != amount) return -37;
             }
 
-            return true;
+            return 0;
         }
 
-        private static bool WithdrawAssets(byte[] holderAddress, byte[] assetID, AssetCategory assetCategory, BigInteger amount, byte[] withdrawToThisAddress)
+        private static int WithdrawAssets(byte[] holderAddress, byte[] assetID, AssetCategory assetCategory, BigInteger amount, byte[] withdrawToThisAddress)
         {
             if (assetCategory == AssetCategory.NEP5)
             {
                 // Transfer token
                 bool transferSuccessful = (bool)CallRPXContract("transfer", ExecutionEngine.ExecutingScriptHash, withdrawToThisAddress, amount);
-                if (!transferSuccessful) return false;
+                if (!transferSuccessful) return -38;
             }
 
             // Reduce balance
@@ -409,29 +411,29 @@ namespace switcheo
 
             // Notify runtime
             //Withdrawn(holderAddress, assetID, (byte)assetCategory, amount);
-            return true;
+            return 0;
         }
 
-        private static bool SetFees(BigInteger takerFee, BigInteger makerFee)
+        private static int SetFees(BigInteger takerFee, BigInteger makerFee)
         {
-            if (takerFee > maxFee || makerFee > maxFee) return false;
-            if (takerFee < 0 || makerFee < 0) return false;
+            if (takerFee > maxFee || makerFee > maxFee) return -39;
+            if (takerFee < 0 || makerFee < 0) return -40;
 
             Storage.Put(Storage.CurrentContext, "takerFee", takerFee);
             Storage.Put(Storage.CurrentContext, "makerFee", makerFee);
 
-            return true;
+            return 0;
         }
 
-        private static bool SetFeeAddress(byte[] feeAddress)
+        private static int SetFeeAddress(byte[] feeAddress)
         {
-            if (feeAddress.Length != 20) return false;
+            if (feeAddress.Length != 20) return -41;
             Storage.Put(Storage.CurrentContext, "feeAddress", feeAddress);
 
-            return true;
+            return 0;
         }
 
-        private static bool VerifySentAmount(byte[] originator, byte[] assetID, AssetCategory assetCategory, BigInteger amount)
+        private static int VerifySentAmount(byte[] originator, byte[] assetID, AssetCategory assetCategory, BigInteger amount)
         {
             // Verify that the offer really has the indicated assets available
             if (assetCategory == AssetCategory.SystemAsset)
@@ -444,17 +446,22 @@ namespace switcheo
                 {
                     if (o.AssetId == assetID && o.ScriptHash == ExecutionEngine.ExecutingScriptHash) sentAmount += o.Value;
                 }
-                if (sentAmount != amount) return false;
+                if (sentAmount != amount) return -42;
             }
             else if (assetCategory == AssetCategory.NEP5)
             {
                 // Check allowance on smart contract
                 BigInteger allowedAmount = (BigInteger)CallRPXContract("allowance", originator, ExecutionEngine.ExecutingScriptHash);
-                if (allowedAmount < amount) return false;
+                if (allowedAmount < amount) return -43;
+            }
+            else
+            {
+                // Unknown asset category
+                return -44;
             }
 
-            // Unknown asset category
-            return false;
+            
+            return 0;
         }
 
         private static void RemoveOffer(byte[] tradingPair, byte[] offerHash)
