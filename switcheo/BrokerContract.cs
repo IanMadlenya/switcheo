@@ -136,6 +136,9 @@ namespace switcheo
                         var txns = block.GetTransactions();
                         foreach (var transaction in txns)
                         {
+                            // Since this is flagged as a withdrawal, and it is signed by the withdrawing user,
+                            // we know that an withdrawal has been executed without a corresponding
+                            // application invocation.
                             if (IsWithdrawingSystemAsset(transaction) && 
                                 GetWithdrawalAddress(transaction) == withdrawingAddr) return false;
                         }
@@ -159,6 +162,8 @@ namespace switcheo
                 if (IsWithdrawingSystemAsset(currentTxn))
                 {
                     var withdrawingAddr = GetWithdrawalAddress(currentTxn);
+                    if (!Runtime.CheckWitness(withdrawingAddr)) return false;
+
                     var outputs = currentTxn.GetOutputs();
                     foreach (var o in outputs)
                     {
@@ -702,6 +707,8 @@ namespace switcheo
             var txnAttributes = transaction.GetAttributes();
             foreach (var attr in txnAttributes)
             {
+                // This is the additional verification script which can be used
+                // to ensure any withdrawal txns are intended by the owner.
                 if (attr.Usage == 0x20) return attr.Data.Take(20);
             }
             return Empty;
@@ -709,12 +716,15 @@ namespace switcheo
 
         private static bool IsWithdrawingSystemAsset(Transaction transaction) 
         {
+            // Must be a invocation transaction
             if (transaction.Type != 0xd1) return false;
 
             var txnAttributes = transaction.GetAttributes();
             foreach (var attr in txnAttributes)
             {
+                // Must have custom transfer flag set
                 // TODO: the data should here be more unique to prevent collisions with other SC (or later versions)
+                // we could perhaps use the ExecutingScriptHash?
                 if (attr.Usage == 0xa1 && attr.Data == Yes) return true;
             }
             return false;
