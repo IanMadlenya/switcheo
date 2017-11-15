@@ -40,6 +40,7 @@ namespace switcheo
         private static readonly byte[] OfferAmountPrefix = { 0x20 };
         private static readonly byte[] WantAmountPrefix = { 0x30 };
         private static readonly byte[] AvailableAmountPrefix = { 0x40 };
+        private static readonly byte[] WithdrawPrefix = { 0x50 };
 
         // Asset Categories
         private static readonly byte[] SystemAsset = { 0x99 };
@@ -107,16 +108,38 @@ namespace switcheo
             {
                 // == Withdrawal of SystemAsset ==
                 // Check that the TransactionAttribute has been set to signify deduction during Application phase
-                // XXX: There is no currently way to check that this contract is invoked from the verification phase
-                if (!WithdrawingSystemAsset()) return false;
+                var currentTxn = (Transaction)ExecutionEngine.ScriptContainer;
+                var withdrawingAddr = GetWithdrawalAddress(currentTxn);
+                if (!IsWithdrawingSystemAsset(currentTxn)) return false;
+
 
                 // Verify that each output is allowed
-                var currentTxn = (Transaction)ExecutionEngine.ScriptContainer;
                 var outputs = currentTxn.GetOutputs();
+
+                // TODO: It would probably be alot simpler if we only allow withdrawal of one asset type at a time
                 foreach (var o in outputs)
                 {
-                    if (o.ScriptHash != ExecutionEngine.ExecutingScriptHash && 
-                        !VerifyWithdrawal(o.ScriptHash, o.AssetId, o.Value)) return false;
+                    // Get amount for each asset
+                    var amount = GetAmountForAssetInOutputs(o.AssetId, outputs);
+                    // Verify that the output address owns the balance 
+                    if (!VerifyWithdrawal(withdrawingAddr, o.AssetId, amount)) return false;
+                }
+
+                // Check that all previous withdrawals has been cleared (SC amounts updated through invoke)
+                var firstDeposited = Storage.Get(Storage.CurrentContext, WithdrawKey(withdrawingAddr)).AsBigInteger();
+                if (firstDeposited != 0)
+                {
+                    var currentHeight = Blockchain.GetHeight();
+                    for (var i = firstDeposited; i < currentHeight; i++)
+                    {
+                        var block = Blockchain.GetBlock((uint)i);
+                        var txns = block.GetTransactions();
+                        foreach (var transaction in txns)
+                        {
+                            if (IsWithdrawingSystemAsset(transaction) && 
+                                GetWithdrawalAddress(transaction) == withdrawingAddr) return false;
+                        }
+                    }
                 }
 
                 // TODO: ensure that gas isn't burnt?
@@ -128,19 +151,26 @@ namespace switcheo
                 Runtime.Log("Application trigger");
 
                 // == Withdrawal of SystemAsset ==
-                // XXX: can the vm be crashed after verification by manipulating the invoke AppCall args?
-                if (WithdrawingSystemAsset())
+                // TODO: We need to be absolutely sure this invocation doesn't fault,
+                // otherwise the future SystemAssets deposited for this user will be stuck.
+                // A better implementation would allow clearing of the withdrawal
+                // flag on a later txn.
+                var currentTxn = (Transaction)ExecutionEngine.ScriptContainer;
+                if (IsWithdrawingSystemAsset(currentTxn))
                 {
-                    var currentTxn = (Transaction)ExecutionEngine.ScriptContainer;
+                    var withdrawingAddr = GetWithdrawalAddress(currentTxn);
                     var outputs = currentTxn.GetOutputs();
                     foreach (var o in outputs)
                     {
                         if (o.ScriptHash != ExecutionEngine.ExecutingScriptHash)
                         {
                             Runtime.Log("Found a withdrawal..");
-                            ReduceBalance(o.ScriptHash, o.AssetId, o.Value);
+                            ReduceBalance(withdrawingAddr, o.AssetId, o.Value);
                         }
                     }
+
+                    Storage.Delete(Storage.CurrentContext, WithdrawKey(withdrawingAddr));
+
                     // return true;
                 }
 
@@ -386,11 +416,11 @@ namespace switcheo
         
         private static bool VerifyWithdrawal(byte[] holderAddress, byte[] assetID, BigInteger amount)
         {
-            // Check that there are asset value > 0 in balance
+            // Check that there are the amount being withdrawn is equal to the balance
             Runtime.Log("Checking asset value..");
             var key = StoreKey(holderAddress, assetID);
             var balance = Storage.Get(Storage.CurrentContext, key).AsBigInteger();
-            if (balance < amount) return false;
+            if (balance != amount) return false;
 
             return true;
         }
@@ -614,20 +644,6 @@ namespace switcheo
             Storage.Delete(Storage.CurrentContext, AvailableAmountPrefix.Concat(offerHash));
         }
 
-        private static bool WithdrawingSystemAsset()
-        {
-            var currentTxn = (Transaction)ExecutionEngine.ScriptContainer;
-            if (currentTxn.Type != 0xd1) return false;
-
-            var txnAttributes = currentTxn.GetAttributes();
-            foreach (var attr in txnAttributes)
-            {
-                if (attr.Usage == 0xa1 && attr.Data == Yes) return true;
-            }
-
-            return false;
-        }
-
         private static void TransferAssetTo(byte[] address, byte[] assetID, BigInteger amount)
         {
             if (amount < 1) 
@@ -636,9 +652,18 @@ namespace switcheo
                 return;
             }
 
-            byte[] key = StoreKey(address, assetID);
-            BigInteger currentBalance = Storage.Get(Storage.CurrentContext, key).AsBigInteger();
-            Storage.Put(Storage.CurrentContext, key, currentBalance + amount);
+            var storeKey = StoreKey(address, assetID);
+            BigInteger currentBalance = Storage.Get(Storage.CurrentContext, storeKey).AsBigInteger();
+            Storage.Put(Storage.CurrentContext, storeKey, currentBalance + amount);
+
+            var withdrawKey = WithdrawKey(address);
+            if (Storage.Get(Storage.CurrentContext, storeKey).AsBigInteger() == 0)
+            {
+                Runtime.Log("Setting last deposit time as this is the first deposit..");
+                Storage.Put(Storage.CurrentContext, withdrawKey, Blockchain.GetHeight());
+            }
+
+            return;
         }
 
         private static void ReduceBalance(byte[] address, byte[] assetID, BigInteger amount)
@@ -661,6 +686,40 @@ namespace switcheo
             return buffer;
         }
 
+        private static ulong GetAmountForAssetInOutputs(byte[] assetID, TransactionOutput[] outputs)
+        {
+            ulong amount = 0;
+            foreach (var o in outputs)
+            {
+                if (o.AssetId == assetID && o.ScriptHash != ExecutionEngine.ExecutingScriptHash) amount += (ulong)o.Value;
+            }
+
+            return amount;
+        }
+
+        private static byte[] GetWithdrawalAddress(Transaction transaction)
+        {
+            var txnAttributes = transaction.GetAttributes();
+            foreach (var attr in txnAttributes)
+            {
+                if (attr.Usage == 0x20) return attr.Data.Take(20);
+            }
+            return Empty;
+        }
+
+        private static bool IsWithdrawingSystemAsset(Transaction transaction) 
+        {
+            if (transaction.Type != 0xd1) return false;
+
+            var txnAttributes = transaction.GetAttributes();
+            foreach (var attr in txnAttributes)
+            {
+                // TODO: the data should here be more unique to prevent collisions with other SC (or later versions)
+                if (attr.Usage == 0xa1 && attr.Data == Yes) return true;
+            }
+            return false;
+        }
+
         private static BigInteger AmountToOffer(Offer o, BigInteger amount)
         {
             return (o.OfferAmount * amount) / o.WantAmount;
@@ -669,6 +728,11 @@ namespace switcheo
         private static byte[] StoreKey(byte[] owner, byte[] assetID)
         {
             return owner.Concat(assetID);
+        }
+
+        private static byte[] WithdrawKey(byte[] owner)
+        {
+            return WithdrawPrefix.Concat(owner);
         }
 
         private static byte[] TradingPair(Offer o)
